@@ -1,76 +1,156 @@
 import redis
-import yaml
 import json
-import random
-import logging
 import time
+import random
+import yaml
+import logging
+import mysql.connector
 from datetime import datetime
 from redis.exceptions import ResponseError
 
-# Setup logger
-logger = logging.getLogger("redis_pipeline")
+# --- Logging Setup ---
+logger = logging.getLogger("RedisWriteBehind")
 logger.setLevel(logging.DEBUG)
-console = logging.StreamHandler()
-logger.addHandler(console)
 
-def get_redis_connection(config):
-    return redis.Redis(host=config['redis']['host'], port=config['redis']['port'], decode_responses=True)
+# Console handler
+ch = logging.StreamHandler()
+formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+ch.setFormatter(formatter)
+logger.addHandler(ch)
 
-def insert_to_redis(config, entity_type, data, ensure_persistence=False):
-    r = get_redis_connection(config)
-    key_name = f"{entity_type}:{datetime.utcnow().isoformat()}:{config['app']['instance_id']}"
-    try:
-        r.json().set(key_name, '$', data)
-        r.xadd(config['streams'][entity_type]['stream_name'], {'key': key_name})
-        if ensure_persistence:
-            replicas = config['redis'].get('replicas', 1)
-            if not r.wait(replicas, 5000):
-                raise Exception("WAIT failed")
-            if not r.execute_command('WAITAOF', '5', '1000'):
-                raise Exception("WAITAOF failed")
-        if config['log']['enabled']:
-            r.xadd(config['log']['streams']['success_insert'], {'key': key_name, 'ts': datetime.utcnow().isoformat()})
-            r.incr('metrics:success_inserts')
-    except Exception as e:
-        if config['log']['enabled']:
-            r.xadd(config['log']['streams']['failed_insert'], {'key': key_name, 'error': str(e), 'ts': datetime.utcnow().isoformat()})
-            r.incr('metrics:failed_inserts')
-        if ensure_persistence:
-            logger.error(f"Retrying insert due to error: {e}")
-            insert_to_redis(config, entity_type, data, ensure_persistence=False)
+# --- Redis Client ---
+def get_redis_client(redis_config):
+    return redis.Redis(
+        host=redis_config['host'],
+        port=redis_config['port'],
+        db=redis_config.get('db', 0),
+        decode_responses=True
+    )
 
-def RedisWriteBehind(config):
-    for entity, stream_cfg in config['streams'].items():
-        r = get_redis_connection(config)
-        stream_name = stream_cfg['stream_name']
-        start_id = stream_cfg.get('start_id', '0-0')
+# --- MySQL Client ---
+def get_mysql_connection(mysql_config):
+    return mysql.connector.connect(
+        host=mysql_config['host'],
+        port=mysql_config.get('port', 3306),
+        user=mysql_config['user'],
+        password=mysql_config['password'],
+        database=mysql_config['database']
+    )
+
+# --- Insert JSON + Stream Entry ---
+def insert_document(config, entity_type, key, data, zero_loss=False, debug=False):
+    redis_client = get_redis_client(config['redis'])
+    stream_key = config['entity_streams'][entity_type]['stream']
+    retries = config.get('retry_attempts', 3)
+
+    for attempt in range(retries):
         try:
-            entries = r.xrange(stream_name, start=start_id, count=stream_cfg['batch_size'])
-            for entry_id, entry in entries:
-                key = entry['key']
-                json_data = r.json().get(key)
-                # Dummy transform and RDBMS write simulation
-                print(f"Writing to DB: {json_data}")
-                if config['log']['enabled']:
-                    r.xadd(config['log']['streams']['success_rdbms'], {'key': key, 'ts': datetime.utcnow().isoformat()})
-                    r.incr('metrics:success_rdbms')
-        except Exception as e:
-            logger.error(f"Failed to write to RDBMS: {e}")
-            r.xadd(config['log']['streams']['failed_rdbms'], {'error': str(e), 'ts': datetime.utcnow().isoformat()})
-            r.incr('metrics:failed_rdbms')
+            # Insert JSON document
+            redis_client.json().set(key, '$', data)
 
-def insert_dummy_user_actions(config):
-    actions = ["login", "logout", "view", "click", "purchase"]
-    for _ in range(5):
-        data = {
-            "user_id": random.randint(1, 100),
-            "action": random.choice(actions),
+            # WAIT/AOF commands for zero-loss if enabled
+            if zero_loss:
+                if debug:
+                    logger.debug(f"[{entity_type}] Using WAITAOF and WAIT for durability")
+                redis_client.execute_command("WAITAOF", 1, 1000)
+                redis_client.execute_command("WAIT", 1, 1000)
+
+            # Add key to Redis Stream
+            redis_client.xadd(stream_key, {'key': key, 'entity': entity_type})
+
+            # Log success
+            if debug:
+                logger.debug(f"Inserted key {key} into Redis and stream {stream_key}")
+            redis_client.incr(f"metrics:{entity_type}:redis:success")
+            return
+
+        except Exception as e:
+            logger.warning(f"[Attempt {attempt+1}] Failed to insert {key}: {e}")
+            redis_client.incr(f"metrics:{entity_type}:redis:fail")
+            time.sleep(1)
+
+    # Final failure
+    if debug:
+        logger.error(f"Failed to insert {key} after {retries} attempts")
+
+# --- Redis Write-Behind Class ---
+class RedisWriteBehind:
+    def __init__(self, config):
+        self.config = config
+        self.redis = get_redis_client(config['redis'])
+        self.rdbms_type = config['rdbms']['type']
+        self.retry_attempts = config.get('retry_attempts', 3)
+        self.debug = config.get('debug_logs', False)
+
+    def _transform_data(self, entity_type, json_data):
+        # Placeholder transform
+        transform = self.config['entity_streams'][entity_type].get('transform')
+        return json_data if transform is None else json_data  # apply your transformation logic here
+
+    def _write_to_rdbms(self, entity_type, records):
+        rdbms_cfg = self.config['rdbms']
+        conn = get_mysql_connection(rdbms_cfg)
+        cursor = conn.cursor()
+
+        for record in records:
+            try:
+                key = record['key']
+                json_data = self.redis.json().get(key)
+                transformed = self._transform_data(entity_type, json_data)
+
+                # For demo, assume table user_actions(user_id, action, ts)
+                cursor.execute(
+                    "INSERT INTO user_actions (user_id, action, ts) VALUES (%s, %s, %s)",
+                    (transformed['user_id'], transformed['action'], transformed['timestamp'])
+                )
+                self.redis.incr(f"metrics:{entity_type}:rdbms:success")
+
+            except Exception as e:
+                self.redis.incr(f"metrics:{entity_type}:rdbms:fail")
+                if self.debug:
+                    logger.warning(f"Failed to write key {key} to RDBMS: {e}")
+
+        conn.commit()
+        cursor.close()
+        conn.close()
+
+    def process_stream(self, entity_type):
+        stream_key = self.config['entity_streams'][entity_type]['stream']
+        count = self.config['entity_streams'][entity_type].get('batch_size', 10)
+        last_id = '0'
+
+        while True:
+            try:
+                entries = self.redis.xrange(stream_key, min=last_id, count=count)
+                if not entries:
+                    break
+
+                records = []
+                for entry_id, data in entries:
+                    last_id = entry_id
+                    records.append({k: v for k, v in data.items()})
+
+                self._write_to_rdbms(entity_type, records)
+
+            except Exception as e:
+                logger.error(f"Error processing stream {stream_key}: {e}")
+                break
+
+# --- Dummy Inserter ---
+def insert_dummy_user_actions(config, num_records=10):
+    import uuid
+    for _ in range(num_records):
+        key = f"user_action:{datetime.utcnow().isoformat()}:{uuid.uuid4()}"
+        doc = {
+            "user_id": f"user{random.randint(1, 5)}",
+            "action": random.choice(["login", "logout", "purchase", "view"]),
             "timestamp": datetime.utcnow().isoformat()
         }
-        insert_to_redis(config, "user_action", data, ensure_persistence=True)
+        insert_document(config, "user_action", key, doc, zero_loss=True, debug=True)
 
-def log_metrics(config):
-    r = get_redis_connection(config)
-    print("Current Metrics:")
-    for metric in ['success_inserts', 'failed_inserts', 'success_rdbms', 'failed_rdbms']:
-        print(f"{metric}: {r.get(f'metrics:{metric}') or 0}")
+# --- Load Metrics from Redis ---
+def load_metrics(config):
+    redis_client = get_redis_client(config['redis'])
+    keys = redis_client.keys("metrics:*")
+    for key in keys:
+        print(f"{key}: {redis_client.get(key)}")

@@ -30,34 +30,26 @@ This project demonstrates a **Write-Behind caching strategy** using Redis Stream
 
 ### Architectural Diagram
 
-+--------------------+
-| Client / App |
-| (Writes JSON) |
-+---------+----------+
-|
-v
-+------------------------+
-| Redis JSON |
-| (Structured Storage) |
-+------------------------+
-|
-v
-+------------------------+
-| Redis Streams |
-| (Event Tracking) |
-+------------------------+
-|
-v
-+------------------------+
-| RedisWriteBehind Class |
-| (RDBMS Sink Worker) |
-+------------------------+
-|
-v
-+------------------------+
-| RDBMS (MySQL, etc) |
-+------------------------+
-
+| Flow |
+|---------|
+| `Client / App` |
+| `(Writes JSON)` |
+|---------|
+| `V` |
+| `Redis JSON` |
+| `(Structured Storage)` |
+|---------|
+| `V` |
+| `Redis Streams` |
+| `(Event Tracking)` |
+|---------|
+| `V` |
+| `RedisWriteBehind Class` |
+| `(RDBMS Sink Worker)` |
+|---------|
+| `V` |
+| `RDBMS (MySQL, etc)` |
+|---------|
 
 ---
 
@@ -77,39 +69,39 @@ v
 
 ## ⚙️ Configuration Files
 
-### `config/rdbms_config.yaml`
+### `config/config.yaml`
 ```yaml
+redis:
+  host: localhost
+  port: 6379
+  replicas: 1
+
 rdbms:
   type: mysql
   host: localhost
   port: 3306
-  user: redisuser
-  password: redispass
-  database: redisdemo
-  ```
-### `config/rdbms_config.yaml`
-  ```yaml
-  redis:
-    host: localhost
-    port: 6379
-    db: 0
+  database: user_events_db
+  user: redis
+  password: redis
+  max_retries: 3
+  retry_delay_sec: 2
 
-  rdbms:
-    type: mysql
-    host: localhost
-    port: 3306
-    user: redisuser
-    password: redispass
-    database: redisdemo
+app:
+  instance_id: instance-001
 
-  retry_attempts: 3
-  debug_logs: true
+streams:
+  user_action:
+    stream_name: stream:user_action
+    batch_size: 10
+    start_id: "0-0"
 
-  entity_streams:
-    user_action:
-      stream: stream:user_action
-      batch_size: 10
-      transform: null
+log:
+  enabled: true
+  streams:
+    success_insert: stream:success_inserts
+    failed_insert: stream:failed_inserts
+    success_rdbms: stream:success_rdbms
+    failed_rdbms: stream:failed_rdbms
   ```
 ##🏃 How to Run the Dummy Pipeline
 ### 1. Prepare Environment

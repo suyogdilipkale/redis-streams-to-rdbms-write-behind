@@ -1,0 +1,31 @@
+redis:
+  host: localhost
+  port: 6379
+  replicas: 1
+
+rdbms:
+  type: mysql
+  host: localhost
+  port: 3306
+  database: user_events_db
+  user: redis
+  password: redis
+  max_retries: 3
+  retry_delay_sec: 2
+
+app:
+  instance_id: instance-001
+
+streams:
+  user_action:
+    stream_name: stream:user_action
+    batch_size: 10
+    start_id: "0-0"
+
+log:
+  enabled: true
+  streams:
+    success_insert: stream:success_inserts
+    failed_insert: stream:failed_inserts
+    success_rdbms: stream:success_rdbms
+    failed_rdbms: stream:failed_rdbms

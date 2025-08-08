@@ -103,7 +103,7 @@ log:
     success_rdbms: stream:success_rdbms
     failed_rdbms: stream:failed_rdbms
   ```
-##🏃 How to Run the Dummy Pipeline
+## 🏃 How to Run the Dummy Pipeline
 ### 1. Prepare Environment
 - Start Redis Stack (with RedisJSON and Streams)
 - Start MySQL and create the required database and table:
@@ -131,13 +131,13 @@ pip install redis mysql-connector-python PyYAML
 ```
 ### 3. Run the Jupyter Notebook
 
-##📊 Observability
-##To view Redis-based counters:
+## 📊 Observability
+## To view Redis-based counters:
 ```python
 from src.utils import load_metrics
 load_metrics(config)
 ```
-##Sample output:
+## Sample output:
 ```makefile
 metrics:user_action:redis:success: 5
 metrics:user_action:rdbms:success: 5

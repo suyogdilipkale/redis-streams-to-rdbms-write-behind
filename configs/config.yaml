@@ -1,31 +1,49 @@
 redis:
   host: localhost
   port: 6379
+  db: 0
+  username: null
+  password: null
+  decode_responses: true
+
+redis_wait:
+  enabled: false
   replicas: 1
+  timeout_ms: 1000
+
+stream_prefixes:
+  user_action: stream
+
+stream_read_batch: 100
 
 rdbms:
-  type: mysql
-  host: localhost
-  port: 3306
-  database: user_events_db
-  user: redis
-  password: redis
-  max_retries: 3
-  retry_delay_sec: 2
+  retry_attempts: 3
+  jdbc:
+    host: localhost
+    port: 3306
+    username: redis
+    password: redis
+    database: redisdemo
 
-app:
-  instance_id: instance-001
-
-streams:
+transformations:
   user_action:
-    stream_name: stream:user_action
-    batch_size: 10
-    start_id: "0-0"
+    table: user_actions
+    mappings:
+      user_id: user_id
+      action: action
+      timestamp: ts
 
-log:
-  enabled: true
-  streams:
-    success_insert: stream:success_inserts
-    failed_insert: stream:failed_inserts
-    success_rdbms: stream:success_rdbms
-    failed_rdbms: stream:failed_rdbms
+metrics:
+  insert_success_stream: stream:insert:success
+  insert_failure_stream: stream:insert:failure
+  insert_retry_stream: stream:insert:retry
+  rdbms_success_stream: stream:rdbms:success
+  rdbms_failure_stream: stream:rdbms:failure
+
+  insert_success_counter: metrics:insert:success
+  insert_failure_counter: metrics:insert:failure
+  insert_retry_counter: metrics:insert:retry
+  rdbms_success_counter: metrics:rdbms:success
+  rdbms_failure_counter: metrics:rdbms:failure
+
+debug: true

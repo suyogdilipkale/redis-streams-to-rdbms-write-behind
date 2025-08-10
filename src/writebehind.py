@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 """
 redis_writebehind_demo.py
 
@@ -358,11 +359,11 @@ def random_search_queries(redis_client: redis.Redis, cfg: Dict[str, Any], entity
     try:
         for _ in range(qcount):
             # simple random sample: search by device_type or user_id patterns
-            sample_field = random.choice(sconf.get("fields", ["user_id"]))
-            term = "*"
+            search_list=["user_id:*","device_type:{android}","device_type:{web}","device_type:{ios}","device_model:{OnePlus-8}"]
+            sample_field = random.choice(search_list)
             # attempt to run FT.SEARCH
             try:
-                resp = redis_client.execute_command("FT.SEARCH", index_name, f"@{sample_field}:{term}", "LIMIT", "0", "10")
+                resp = redis_client.execute_command("FT.SEARCH", index_name, f"@{sample_field}", "LIMIT", "0", "10")
                 results.append(resp)
                 logger.debug(results)
             except Exception as e:
@@ -563,6 +564,10 @@ def consume_periodically(redis_client: redis.Redis, pg_conn, cfg: Dict[str, Any]
             time.sleep(1)
     logger.info("Stopped periodic consumer for entity %s", entity)
 
+# Load Metrics
+def load_metrics(r, config):
+    metric_keys = ['metrics:redis_success','metrics:redis_fail','metrics:redis_retry','metrics:postgres_success','metrics:postgres_fail']
+    return {key: r.get(key) or 0 for key in metric_keys}
 
 # ---------------------------
 # Main
@@ -594,8 +599,6 @@ def main():
     # Create search index if configured
     logger.info("Creating search index")
     create_search_index(redis_client, cfg, entity)
-    logger.info("Starting dummy searches")
-    random_search_queries(redis_client, cfg, entity, 5)
     # Start periodic consumer in background thread
     stop_event = threading.Event()
     consumer_thread = threading.Thread(target=consume_periodically, args=(redis_client, pg_conn, cfg, entity, stop_event), daemon=True)
@@ -606,17 +609,20 @@ def main():
         logger.info("Starting dummy data generation")
         dummy_data_worker(redis_client, cfg, entity)
         logger.info("Dummy data generation complete")
+        logger.info("Starting dummy searches")
+        random_search_queries(redis_client, cfg, entity, 5)
+        logger.info("Starting metrics check")
+        print(load_metrics(redis_client, cfg))
     except KeyboardInterrupt:
         logger.info("Interrupted by user")
     finally:
         # Allow one last pass for consumer
         logger.info("Waiting briefly for consumer to process...")
-        time.sleep(2)
+        time.sleep(100)
         stop_event.set()
         consumer_thread.join(timeout=10)
         pg_conn.close()
         logger.info("Shutdown complete")
-
 
 if __name__ == "__main__":
     main()

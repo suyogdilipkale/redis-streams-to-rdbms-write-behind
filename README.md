@@ -45,7 +45,7 @@ The approach is intended for **use cases where**:
 ---
 
 ## 🔧 How It Works
-<img width="1536" height="1024" alt="f06a67b5-369b-4ee6-bb48-11b100f0e2e3" src="https://github.com/user-attachments/assets/30f09837-c111-4ab5-8dd6-6371d166eda7" />
+<img width="600" height="400" alt="f06a67b5-369b-4ee6-bb48-11b100f0e2e3" src="https://github.com/user-attachments/assets/30f09837-c111-4ab5-8dd6-6371d166eda7" />
 
 ### Architectural Diagram
 

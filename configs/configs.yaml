@@ -1,0 +1,53 @@
+postgresql:
+  host: "localhost"
+  port: 5432
+  database: "redisdemo"
+  user: "redis"
+  password: "redis"
+
+redis:
+  host: "localhost"
+  port: 6379
+  db: 0
+  password: null
+
+zero_data_loss:
+  enabled: true
+  wait_for_replicas: true
+  replicas: 1
+  wait_timeout_ms: 2000
+  wait_for_aof_rewrite: false   # best-effort simulation using BGREWRITEAOF
+
+streams:
+  prefix: "stream"
+  log_streams:
+    redis_success: "log:redis:success"
+    redis_fail: "log:redis:fail"
+    redis_retry: "log:redis:retry"
+    postgres_success: "log:postgres:success"
+    postgres_fail: "log:postgres:fail"
+  last_id_key_prefix: "stream:lastid"  # used to store last processed id per stream
+
+dummy_data:
+  num_records: 5
+  create_pct: 0.6
+  update_pct: 0.3
+  delete_pct: 0.1
+  perform_write_behind:
+    insert: true
+    update: true
+    delete: false
+
+write_behind:
+  batch_size: 5
+  max_retry_attempts: 3
+  interval_seconds: 10
+
+search_index:
+  create_index: true
+  index_name: "idx:sessions"
+
+  fields:
+    - { name: "user_id", type: "TEXT" }
+    - { name: "device_type", type: "TAG" }
+    - { name: "device_model", type: "TAG" }

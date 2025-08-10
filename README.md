@@ -72,25 +72,54 @@ The approach is intended for **use cases where**:
 
 ---
 
-## 🧠 Key Functions
+# Functions and Purpose
 
-| Function Name               | Purpose                                                           |
-| --------------------------- | ----------------------------------------------------------------- |
-| `connect_redis()`           | Create Redis connection object (params from `config.yaml`)        |
-| `connect_postgres()`        | Create PostgreSQL connection object                               |
-| `insert_document()`         | Insert JSON doc into Redis, generate unique ID                    |
-| `update_document()`         | Update doc in Redis                                               |
-| `delete_document()`         | Delete doc in Redis                                               |
-| `generate_dummy_data()`     | Simulate mobile banking sessions (create/update/delete docs)      |
-| `enqueue_event_to_stream()` | Push event (insert/update/delete) to Redis Streams with timestamp |
-| `create_redisearch_index()` | Create secondary index in Redis for search queries                |
-| `read_documents_by_ids()`   | Fetch list of docs from Redis by IDs                              |
-| `search_documents()`        | Run random search queries using RediSearch                        |
-| `redis_write_behind()`      | Read from Redis Streams, write to PostgreSQL with retry logic     |
-| `dummy_consumer()`          | Periodically trigger write-behind                                 |
-| `log_metrics()`             | Store metrics in Redis counters & log streams                     |
-| `load_metrics()`            | Fetch current metrics from Redis                                  |
+### **Configuration & Connection**
+- `load_config(path)`: Loads YAML configuration file.
+- `connect_redis(cfg)`: Connects to Redis using config.
+- `connect_postgres(cfg)`: Connects to PostgreSQL using config.
 
+### **Utility**
+- `generate_doc_id(app_id, machine_id)`: Generates unique document ID with app prefix and timestamp.
+
+### **Redis JSON + Streams CRUD**
+- `insert_document(redis_client, cfg, entity, document, doc_id)`: Inserts a JSON document into Redis and pushes an `insert` event to Streams.
+- `update_document(redis_client, cfg, entity, doc_id, patch)`: Updates an existing JSON document and pushes an `update` event to Streams.
+- `delete_document(redis_client, cfg, entity, doc_id)`: Deletes a document and pushes a `delete` event to Streams.
+
+### **Internal Helpers**
+- `_push_stream(redis_client, cfg, entity, doc_id, event_type)`: Adds an event entry to the Redis Stream for the entity.
+- `_log_event(redis_client, cfg, key, payload)`: Logs an operation into a log stream and increments corresponding metrics.
+- `_wait_for_durability(redis_client, cfg)`: Waits for replicas (WAIT) and optionally simulates AOF durability.
+- `_get_stream_names_for_entity(cfg, entity)`: Returns the list of stream names for the given entity.
+- `_get_last_processed_id(redis_client, cfg, stream_name)`: Retrieves last processed stream ID for consumer.
+- `_set_last_processed_id(redis_client, cfg, stream_name, last_id)`: Stores last processed stream ID for consumer.
+
+### **Read + Search**
+- `read_by_ids(redis_client, entity, doc_ids)`: Reads documents from Redis by IDs.
+- `create_search_index(redis_client, cfg, entity)`: Creates a RediSearch index for the entity.
+- `random_search_queries(redis_client, cfg, entity, qcount)`: Runs random FT.SEARCH queries (best-effort).
+
+### **Write-Behind Consumer**
+- `RedisWriteBehind(redis_client, pg_conn, cfg, entity)`: Processes Redis Stream events and writes to PostgreSQL with retry logic.
+
+### **Dummy Data**
+- `generate_dummy_session()`: Creates a dummy session document.
+- `dummy_data_worker(redis_client, cfg, entity)`: Generates dummy create/update/delete events for testing.
+
+### **Consumer Loop & Metrics**
+- `consume_periodically(redis_client, pg_conn, cfg, entity, stop_event)`: Runs the write-behind consumer at intervals in a background thread.
+- `load_metrics(r, config)`: Retrieves Redis metrics keys for success/fail counts.
+
+### **Main Entry Point**
+- `main()`: Orchestrates connections, table creation, index creation, starts the consumer loop, runs dummy data generator, and displays metrics.
+
+---
+
+## Example Search Queries
+```bash
+FT.SEARCH idx:sessions "@user_id:user_4554" RETURN 4 user_id session_id device_type device_model
+FT.SEARCH idx:sessions "@device_type:{android}" RETURN 4 user_id session_id device_type device_model
 ---
 
 ## ⚙️ Configuration Files
@@ -203,9 +232,7 @@ load_metrics(config)
 ```
 ## Sample output:
 ```makefile
-metrics:user_action:redis:success: 5
-metrics:user_action:rdbms:success: 5
-metrics:user_action:rdbms:fail: 0
+{'metrics:redis_success': '30', 'metrics:redis_fail': 0, 'metrics:redis_retry': 0, 'metrics:postgres_success': '28', 'metrics:postgres_fail': 0}
 ```
 
 ## Disclaimer
